@@ -34,6 +34,22 @@ struct QuranReciter: Identifiable, Codable, Hashable {
     }
 }
 
+struct QuranVerse: Identifiable, Hashable {
+    let id: Int
+    let verseKey: String
+    let textArabic: String
+}
+
+struct QuranVerseTiming: Hashable {
+    let verseKey: String
+    let startTime: Double
+}
+
+struct QuranChapterAudio: Hashable {
+    let audioURL: URL
+    let verseTimings: [QuranVerseTiming]
+}
+
 enum QuranAPIError: LocalizedError {
     case invalidURL
     case invalidResponse

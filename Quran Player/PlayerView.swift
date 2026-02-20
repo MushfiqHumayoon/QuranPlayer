@@ -14,6 +14,9 @@ struct PlayerView: View {
     @State private var scrubTime: Double = 0
     @State private var isEditingSlider = false
     @State private var isOptionsSheetPresented = false
+    @State private var currentVerseOffscreenDirection: CurrentVerseJumpDirection?
+    @State private var jumpToCurrentVerseRequestID = 0
+    @State private var backgroundFlowProgress = false
 
     var body: some View {
         Group {
@@ -49,40 +52,41 @@ struct PlayerView: View {
 
     @ViewBuilder
     private func playerBody(chapter: QuranChapter) -> some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.05, green: 0.08, blue: 0.10),
-                    Color(red: 0.12, green: 0.22, blue: 0.19),
-                    Color(red: 0.16, green: 0.26, blue: 0.22)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+        GeometryReader { geometry in
+            let isCompactHeight = geometry.size.height < 760
 
-            VStack(spacing: 24) {
-                header
-                Spacer()
-                artwork
-                metadata(chapter: chapter)
-                progressSection
-                controls(chapter: chapter)
-                Spacer()
+            ZStack {
+                animatedTrendingBackground
+                .ignoresSafeArea()
+
+                VStack(spacing: isCompactHeight ? 12 : 18) {
+                    header(chapter: chapter)
+//                    artwork(maxWidth: isCompactHeight ? 210 : 300)
+                    metadata(chapter: chapter)
+                    versesSection
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+
+                if viewModel.isLoadingAudio {
+                    ProgressView()
+                        .controlSize(.large)
+                        .tint(.white)
+                }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 28)
-
-            if viewModel.isLoadingAudio {
-                ProgressView()
-                    .controlSize(.large)
-                    .tint(.white)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                bottomPlaybackBar(chapter: chapter)
+            }
+            .onAppear {
+                startBackgroundAnimation()
             }
         }
     }
 
-    private var header: some View {
+    private func header(chapter: QuranChapter) -> some View {
         HStack {
             Button {
                 dismiss()
@@ -98,13 +102,13 @@ struct PlayerView: View {
             Spacer()
 
             VStack(spacing: 2) {
-                Text("Playing Quran")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.78))
-                Text(viewModel.reciter?.reciterName ?? "Quran")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(1)
+                Text(chapter.nameSimple)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+
+                Text(chapter.nameArabic)
+                    .font(.title3)
+                    .foregroundStyle(.white.opacity(0.92))
             }
 
             Spacer()
@@ -122,7 +126,7 @@ struct PlayerView: View {
         }
     }
 
-    private var artwork: some View {
+    private func artwork(maxWidth: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: 30, style: .continuous)
             .fill(
                 LinearGradient(
@@ -139,26 +143,18 @@ struct PlayerView: View {
                     .font(.system(size: 72))
                     .foregroundStyle(.white.opacity(0.95))
             }
-            .frame(maxWidth: 340)
+            .frame(maxWidth: maxWidth)
             .aspectRatio(1, contentMode: .fit)
             .shadow(color: .black.opacity(0.22), radius: 24, y: 14)
     }
 
     private func metadata(chapter: QuranChapter) -> some View {
         VStack(spacing: 8) {
-            Text(chapter.nameSimple)
-                .font(.title2.weight(.bold))
-                .foregroundStyle(.white)
-
-            Text(chapter.nameArabic)
-                .font(.title3)
-                .foregroundStyle(.white.opacity(0.92))
-
-            Text("Chapter \(chapter.id) - \(chapter.translatedName.name)")
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.72))
+            Text(viewModel.reciter?.reciterName ?? "Quran")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.7))
                 .lineLimit(1)
-
+            
             if viewModel.isDownloadingCurrentChapter {
                 Label("Downloading for offline playback", systemImage: "arrow.down.circle")
                     .font(.caption)
@@ -174,6 +170,85 @@ struct PlayerView: View {
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.78))
             }
+        }
+    }
+
+    private var versesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            versesSectionHeader
+            versesSectionContent
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onChange(of: viewModel.verses.isEmpty) { _, isEmpty in
+            if isEmpty {
+                currentVerseOffscreenDirection = nil
+            }
+        }
+        .onChange(of: viewModel.currentChapter?.id) { _, _ in
+            currentVerseOffscreenDirection = nil
+        }
+    }
+
+    private var versesSectionHeader: some View {
+        HStack {
+            Text("Verses")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.9))
+
+            Spacer()
+
+            if let verseIndex = viewModel.currentVerseIndex, !viewModel.verses.isEmpty {
+                HStack(spacing: 8) {
+                    Text("Ayah \(verseIndex + 1)/\(viewModel.verses.count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.72))
+
+                    if let currentVerseOffscreenDirection {
+                        Button {
+                            jumpToCurrentVerseRequestID += 1
+                        } label: {
+                            Image(systemName: currentVerseOffscreenDirection.systemImage)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 20, height: 20)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var versesSectionContent: some View {
+        if viewModel.verses.isEmpty {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .overlay {
+                    if viewModel.isLoadingVerses {
+                        ProgressView("Loading verses")
+                            .font(.caption)
+                            .tint(.white)
+                    } else {
+                        Text("Verses unavailable for this chapter.")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VerseLyricsList(
+                verses: viewModel.verses,
+                highlightedIndex: viewModel.currentVerseIndex,
+                scrollToCurrentVerseRequestID: jumpToCurrentVerseRequestID,
+                onVerseTap: { verseIndex in
+                    viewModel.seek(toVerseIndex: verseIndex)
+                },
+                onCurrentVerseVisibilityChange: { direction in
+                    currentVerseOffscreenDirection = direction
+                }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -206,6 +281,22 @@ struct PlayerView: View {
             .font(.caption.monospacedDigit())
             .foregroundStyle(.white.opacity(0.75))
         }
+    }
+
+    private func bottomPlaybackBar(chapter: QuranChapter) -> some View {
+        VStack(spacing: 14) {
+            progressSection
+            controls(chapter: chapter)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity)
+        .background(
+            Rectangle()
+                .fill(Color.clear)
+                .ignoresSafeArea(edges: .bottom)
+        )
     }
 
     private func controls(chapter: QuranChapter) -> some View {
@@ -241,7 +332,7 @@ struct PlayerView: View {
             .opacity(viewModel.isLoadingAudio ? 0.6 : 1)
             .disabled(viewModel.isLoadingAudio)
 
-            Text("\(chapter.versesCount) verses")
+            Text("Chapter \(chapter.id) - \(chapter.translatedName.name) | \(chapter.versesCount) verses")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.7))
         }
@@ -264,6 +355,225 @@ struct PlayerView: View {
         let minutes = clamped / 60
         let remainingSeconds = clamped % 60
         return String(format: "%02d:%02d", minutes, remainingSeconds)
+    }
+
+    private var animatedTrendingBackground: some View {
+        let flowStart = UnitPoint(x: 0.5, y: backgroundFlowProgress ? -0.15 : 1.15)
+        let flowEnd = UnitPoint(x: 0.5, y: backgroundFlowProgress ? 0.85 : 2.15)
+
+        return ZStack {
+            LinearGradient(
+                colors: [
+                    Color.black,
+                    Color(red: 0.03, green: 0.04, blue: 0.07),
+                    Color(red: 0.05, green: 0.06, blue: 0.10)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            LinearGradient(
+                colors: [
+                    Color(red: 0.02, green: 0.11, blue: 0.20),
+                    Color(red: 0.06, green: 0.15, blue: 0.11),
+                    Color(red: 0.09, green: 0.10, blue: 0.18),
+                    Color(red: 0.12, green: 0.12, blue: 0.14)
+                ],
+                startPoint: flowStart,
+                endPoint: flowEnd
+            )
+            .opacity(0.45)
+            .blur(radius: 36)
+        }
+    }
+
+    private func startBackgroundAnimation() {
+        guard !backgroundFlowProgress else { return }
+        withAnimation(.linear(duration: 18).repeatForever(autoreverses: true)) {
+            backgroundFlowProgress = true
+        }
+    }
+}
+
+private struct VerseLyricsList: View {
+    let verses: [QuranVerse]
+    let highlightedIndex: Int?
+    let scrollToCurrentVerseRequestID: Int
+    let onVerseTap: (Int) -> Void
+    let onCurrentVerseVisibilityChange: (CurrentVerseJumpDirection?) -> Void
+
+    @State private var rowFramesByIndex: [Int: CGRect] = [:]
+    @State private var viewportFrame: CGRect = .zero
+    @State private var lastReportedDirection: CurrentVerseJumpDirection?
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 10) {
+                    ForEach(verses.indices, id: \.self) { index in
+                        VerseLyricsRow(
+                            index: index,
+                            verse: verses[index],
+                            isCurrent: index == highlightedIndex
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            onVerseTap(index)
+                        }
+                        .animation(.easeInOut(duration: 0.25), value: highlightedIndex)
+                        .background {
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: VerseRowFramePreferenceKey.self,
+                                    value: [index: geometry.frame(in: .named("VerseLyricsScrollArea"))]
+                                )
+                            }
+                        }
+                        .id(verses[index].id)
+                    }
+                }
+            }
+            .coordinateSpace(name: "VerseLyricsScrollArea")
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: VerseViewportFramePreferenceKey.self,
+                        value: geometry.frame(in: .named("VerseLyricsScrollArea"))
+                    )
+                }
+            }
+            .onPreferenceChange(VerseRowFramePreferenceKey.self) { value in
+                rowFramesByIndex = value
+                updateCurrentVerseDirection()
+            }
+            .onPreferenceChange(VerseViewportFramePreferenceKey.self) { value in
+                viewportFrame = value
+                updateCurrentVerseDirection()
+            }
+            .onAppear {
+                scrollToHighlightedVerse(proxy: proxy, animated: false)
+                updateCurrentVerseDirection()
+            }
+            .onChange(of: highlightedIndex) { _, _ in
+                updateCurrentVerseDirection()
+            }
+            .onChange(of: scrollToCurrentVerseRequestID) { _, _ in
+                scrollToHighlightedVerse(proxy: proxy, animated: true)
+                reportCurrentVerseDirection(nil)
+            }
+        }
+        .onDisappear {
+            reportCurrentVerseDirection(nil)
+        }
+    }
+
+    private func scrollToHighlightedVerse(proxy: ScrollViewProxy, animated: Bool) {
+        guard let highlightedIndex, verses.indices.contains(highlightedIndex) else { return }
+        let verseID = verses[highlightedIndex].id
+
+        if animated {
+            withAnimation(.easeInOut(duration: 0.32)) {
+                proxy.scrollTo(verseID, anchor: .center)
+            }
+        } else {
+            proxy.scrollTo(verseID, anchor: .center)
+        }
+    }
+
+    private func updateCurrentVerseDirection() {
+        guard let highlightedIndex else {
+            reportCurrentVerseDirection(nil)
+            return
+        }
+
+        guard let verseFrame = rowFramesByIndex[highlightedIndex], !viewportFrame.isEmpty else {
+            reportCurrentVerseDirection(nil)
+            return
+        }
+
+        let direction: CurrentVerseJumpDirection?
+        if verseFrame.maxY < viewportFrame.minY {
+            direction = .up
+        } else if verseFrame.minY > viewportFrame.maxY {
+            direction = .down
+        } else {
+            direction = nil
+        }
+
+        reportCurrentVerseDirection(direction)
+    }
+
+    private func reportCurrentVerseDirection(_ direction: CurrentVerseJumpDirection?) {
+        guard lastReportedDirection != direction else { return }
+        lastReportedDirection = direction
+        onCurrentVerseVisibilityChange(direction)
+    }
+}
+
+private struct VerseLyricsRow: View {
+    let index: Int
+    let verse: QuranVerse
+    let isCurrent: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(index + 1)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(
+                    isCurrent ? Color.white.opacity(0.95) : Color.white.opacity(0.65)
+                )
+                .frame(width: 30, alignment: .leading)
+
+            Text(verse.textArabic)
+                .font(isCurrent ? .title3 : .body)
+                .foregroundStyle(isCurrent ? .white : .white.opacity(0.82))
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isCurrent ? Color.white.opacity(0.18) : Color.white.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isCurrent ? Color.white.opacity(0.55) : Color.clear, lineWidth: 1)
+        )
+    }
+}
+
+private enum CurrentVerseJumpDirection: Equatable {
+    case up
+    case down
+
+    var systemImage: String {
+        switch self {
+        case .up:
+            return "arrow.up.circle.fill"
+        case .down:
+            return "arrow.down.circle.fill"
+        }
+    }
+}
+
+private struct VerseRowFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct VerseViewportFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if !next.isEmpty {
+            value = next
+        }
     }
 }
 

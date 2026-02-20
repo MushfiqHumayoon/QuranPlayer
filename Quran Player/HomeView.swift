@@ -8,10 +8,13 @@
 import SwiftUI
 
 struct HomeView: View {
+    @Environment(\.isSearching) private var isSearching
     let playerViewModel: PlayerViewModel
     @StateObject private var viewModel: HomeViewModel
     @State private var isPlayerPresented = false
     @State private var hasRestoredPlayback = false
+    @State private var chapterSearchText = ""
+    @State private var isChapterSearchPresented = false
 
     @MainActor
     init(playerViewModel: PlayerViewModel, viewModel: HomeViewModel? = nil) {
@@ -30,14 +33,33 @@ struct HomeView: View {
                         systemImage: "wifi.exclamationmark",
                         description: Text(errorMessage)
                     )
+                } else if filteredChapters.isEmpty {
+                    ContentUnavailableView(
+                        "No matching chapter",
+                        systemImage: "magnifyingglass",
+                        description: Text("Try a different chapter name or number.")
+                    )
                 } else {
                     chapterList
                 }
             }
             .navigationTitle("Quran")
+            .searchable(
+                text: $chapterSearchText,
+                isPresented: $isChapterSearchPresented,
+                prompt: "Search chapters"
+            )
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     reciterMenu
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if shouldShowMiniPlayer {
+                    HomeMiniPlayerContainer(
+                        playerViewModel: playerViewModel,
+                        isPlayerPresented: $isPlayerPresented
+                    )
                 }
             }
         }
@@ -59,12 +81,6 @@ struct HomeView: View {
             PlayerView()
                 .environmentObject(playerViewModel)
         }
-        .safeAreaInset(edge: .bottom) {
-            HomeMiniPlayerContainer(
-                playerViewModel: playerViewModel,
-                isPlayerPresented: $isPlayerPresented
-            )
-        }
         .onChange(of: viewModel.selectedReciterID) { _, _ in
             guard let reciter = viewModel.selectedReciter else { return }
             playerViewModel.updateReciter(reciter)
@@ -72,7 +88,7 @@ struct HomeView: View {
     }
 
     private var chapterList: some View {
-        List(viewModel.chapters) { chapter in
+        List(filteredChapters) { chapter in
             Button {
                 guard let reciter = viewModel.selectedReciter else { return }
                 playerViewModel.startPlayback(
@@ -106,6 +122,7 @@ struct HomeView: View {
                 }
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
+                .padding(.bottom, filteredChapters.last == chapter ? 100 : 0)
             }
             .buttonStyle(.plain)
             .disabled(viewModel.selectedReciter == nil)
@@ -117,7 +134,6 @@ struct HomeView: View {
                 viewModel.selectedReciterID = reciterID
             }
         }
-        .padding(.bottom, 100)
     }
 
     @ViewBuilder
@@ -142,6 +158,35 @@ struct HomeView: View {
                 Image(systemName: "music.mic")
             }
         }
+    }
+
+    private var filteredChapters: [QuranChapter] {
+        let query = chapterSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return viewModel.chapters }
+
+        return viewModel.chapters.filter { chapter in
+            if "\(chapter.id)".contains(query) {
+                return true
+            }
+
+            if chapter.nameSimple.localizedCaseInsensitiveContains(query) {
+                return true
+            }
+
+            if chapter.translatedName.name.localizedCaseInsensitiveContains(query) {
+                return true
+            }
+
+            if chapter.nameArabic.contains(query) {
+                return true
+            }
+
+            return false
+        }
+    }
+
+    private var shouldShowMiniPlayer: Bool {
+        !isChapterSearchPresented && !isSearching
     }
 }
 

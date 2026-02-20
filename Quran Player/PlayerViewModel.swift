@@ -29,6 +29,7 @@ enum SleepTimerPreset: Int, CaseIterable, Identifiable {
 final class PlayerViewModel: ObservableObject {
     @Published private(set) var currentChapter: QuranChapter?
     @Published private(set) var chapters: [QuranChapter] = []
+    @Published private(set) var verses: [QuranVerse] = []
     @Published private(set) var reciter: QuranReciter?
     @Published private(set) var isLoadingAudio = false
     @Published var errorMessage: String?
@@ -39,6 +40,8 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var isReadyToPlay = false
     @Published private(set) var isChapterCached = false
     @Published private(set) var isDownloadingCurrentChapter = false
+    @Published private(set) var isLoadingVerses = false
+    @Published private(set) var verseStartTimes: [Double] = []
     @Published private(set) var sleepTimerRemaining: TimeInterval?
 
     let player: AudioPlayerManager
@@ -47,6 +50,9 @@ final class PlayerViewModel: ObservableObject {
     private let cacheManager: AudioCacheManager
     private let playbackStore: PlaybackStateStore
     private var loadTask: Task<Void, Never>?
+    private var versesLoadTask: Task<Void, Never>?
+    private var verseTimingsLoadTask: Task<Void, Never>?
+    private var verseTimingLookup: [String: Double] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var remoteCommandTargets: [(MPRemoteCommand, Any)] = []
     private var sleepTimerTask: Task<Void, Never>?
@@ -91,6 +97,16 @@ final class PlayerViewModel: ObservableObject {
     var canGoToNextChapter: Bool {
         guard let chapterIndex else { return false }
         return chapterIndex < chapters.count - 1
+    }
+
+    var currentVerseIndex: Int? {
+        guard !verses.isEmpty else { return nil }
+
+        if verseStartTimes.count == verses.count, !verseStartTimes.isEmpty {
+            return verseIndex(for: currentTime, in: verseStartTimes)
+        }
+
+        return weightedFallbackVerseIndex()
     }
 
     func startPlayback(chapter: QuranChapter, chapters: [QuranChapter], reciter: QuranReciter) {
@@ -142,12 +158,20 @@ final class PlayerViewModel: ObservableObject {
         persistPlaybackState(force: true)
         loadTask?.cancel()
         loadTask = nil
+        versesLoadTask?.cancel()
+        versesLoadTask = nil
+        verseTimingsLoadTask?.cancel()
+        verseTimingsLoadTask = nil
         cancelSleepTimer()
         player.stop()
         currentChapter = nil
         chapters = []
+        verses = []
+        verseStartTimes = []
+        verseTimingLookup = [:]
         reciter = nil
         isLoadingAudio = false
+        isLoadingVerses = false
         isChapterCached = false
         isDownloadingCurrentChapter = false
         errorMessage = nil
@@ -156,6 +180,22 @@ final class PlayerViewModel: ObservableObject {
 
     func seek(to seconds: Double) {
         player.seek(to: seconds)
+    }
+
+    func seek(toVerseIndex index: Int) {
+        guard verses.indices.contains(index) else { return }
+
+        let targetTime: Double
+        if verseStartTimes.count == verses.count, !verseStartTimes.isEmpty {
+            targetTime = verseStartTimes[index]
+        } else if duration > 0 {
+            targetTime = weightedFallbackTime(forVerseIndex: index)
+        } else {
+            return
+        }
+
+        seek(to: targetTime)
+        persistPlaybackState(force: true)
     }
 
     func skipForward() {
@@ -257,11 +297,41 @@ final class PlayerViewModel: ObservableObject {
 
         let chapterID = chapter.id
         currentChapter = chapter
+        verses = []
+        verseStartTimes = []
+        verseTimingLookup = [:]
         isLoadingAudio = true
+        isLoadingVerses = true
         errorMessage = nil
         isChapterCached = false
         updateNowPlayingInfo()
         persistPlaybackState(force: true)
+
+        versesLoadTask?.cancel()
+        versesLoadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let loadedVerses = try await self.service.fetchVerses(chapterID: chapterID)
+                await MainActor.run {
+                    guard self.currentChapter?.id == chapterID else { return }
+                    self.verses = loadedVerses
+                    self.isLoadingVerses = false
+                    self.rebuildVerseStartTimes()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run {
+                    guard self.currentChapter?.id == chapterID else { return }
+                    self.verses = []
+                    self.isLoadingVerses = false
+                    self.verseStartTimes = []
+                }
+            }
+        }
+
+        verseTimingsLoadTask?.cancel()
+        verseTimingsLoadTask = nil
 
         loadTask?.cancel()
         loadTask = Task { [weak self] in
@@ -272,9 +342,16 @@ final class PlayerViewModel: ObservableObject {
                 try Task.checkCancellation()
 
                 await MainActor.run {
+                    guard self.currentChapter?.id == chapterID else { return }
                     self.player.load(url: source.playbackURL, autoplay: autoplay, startAt: startTime)
                     self.isLoadingAudio = false
                     self.isChapterCached = source.isCached
+                    self.applyVerseTimings(source.verseTimings)
+
+                    if source.isCached && source.verseTimings.isEmpty {
+                        self.loadVerseTimingsInBackground(chapterID: chapterID, reciterID: reciterID)
+                    }
+
                     self.updateNowPlayingInfo()
                     self.persistPlaybackState(force: true)
                 }
@@ -287,6 +364,194 @@ final class PlayerViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func loadVerseTimingsInBackground(chapterID: Int, reciterID: Int) {
+        verseTimingsLoadTask?.cancel()
+        verseTimingsLoadTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let chapterAudio = try await self.service.fetchChapterAudio(
+                    chapterID: chapterID,
+                    reciterID: reciterID
+                )
+                await self.cacheManager.storeRemoteURL(
+                    chapterAudio.audioURL,
+                    chapterID: chapterID,
+                    reciterID: reciterID
+                )
+
+                await MainActor.run {
+                    guard self.currentChapter?.id == chapterID, self.reciter?.id == reciterID else { return }
+                    self.applyVerseTimings(chapterAudio.verseTimings)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func applyVerseTimings(_ verseTimings: [QuranVerseTiming]) {
+        guard !verseTimings.isEmpty else { return }
+
+        var lookup: [String: Double] = [:]
+        for timing in verseTimings {
+            guard timing.startTime.isFinite, timing.startTime >= 0 else { continue }
+            if let existing = lookup[timing.verseKey] {
+                lookup[timing.verseKey] = min(existing, timing.startTime)
+            } else {
+                lookup[timing.verseKey] = timing.startTime
+            }
+        }
+
+        guard !lookup.isEmpty else { return }
+        verseTimingLookup = lookup
+        rebuildVerseStartTimes()
+    }
+
+    private func rebuildVerseStartTimes() {
+        guard !verses.isEmpty else {
+            verseStartTimes = []
+            return
+        }
+
+        var starts: [Double?] = verses.map { verseTimingLookup[$0.verseKey] }
+        let knownIndices = starts.indices.filter { starts[$0] != nil }
+
+        guard knownIndices.count >= 2 else {
+            verseStartTimes = []
+            return
+        }
+
+        for knownPairIndex in 0..<(knownIndices.count - 1) {
+            let leftIndex = knownIndices[knownPairIndex]
+            let rightIndex = knownIndices[knownPairIndex + 1]
+            guard rightIndex - leftIndex > 1 else { continue }
+            guard let leftTime = starts[leftIndex], let rightTime = starts[rightIndex] else { continue }
+
+            let segmentSpan = max(0, rightTime - leftTime)
+            let intervalIndices = leftIndex..<rightIndex
+            let intervalWeights = intervalIndices.map { Double(max(1, verses[$0].textArabic.count)) }
+            let totalWeight = intervalWeights.reduce(0, +)
+            guard totalWeight > 0 else { continue }
+
+            var running = leftTime
+            for intervalOffset in 0..<(intervalWeights.count - 1) {
+                let step = segmentSpan * (intervalWeights[intervalOffset] / totalWeight)
+                running += step
+                starts[leftIndex + intervalOffset + 1] = running
+            }
+        }
+
+        if let firstKnownIndex = knownIndices.first, firstKnownIndex > 0, let firstKnownTime = starts[firstKnownIndex] {
+            let forwardStep: Double
+            if knownIndices.count > 1,
+               let secondTime = starts[knownIndices[1]],
+               knownIndices[1] > firstKnownIndex {
+                forwardStep = max(0.1, (secondTime - firstKnownTime) / Double(knownIndices[1] - firstKnownIndex))
+            } else {
+                forwardStep = estimatedVerseDurationStep()
+            }
+
+            var running = firstKnownTime
+            for index in stride(from: firstKnownIndex - 1, through: 0, by: -1) {
+                running = max(0, running - forwardStep)
+                starts[index] = running
+            }
+        }
+
+        if let lastKnownIndex = knownIndices.last, lastKnownIndex < starts.count - 1, let lastKnownTime = starts[lastKnownIndex] {
+            let forwardStep: Double
+            if knownIndices.count > 1,
+               let previousTime = starts[knownIndices[knownIndices.count - 2]],
+               lastKnownIndex > knownIndices[knownIndices.count - 2] {
+                forwardStep = max(0.1, (lastKnownTime - previousTime) / Double(lastKnownIndex - knownIndices[knownIndices.count - 2]))
+            } else {
+                forwardStep = estimatedVerseDurationStep()
+            }
+
+            var running = lastKnownTime
+            for index in (lastKnownIndex + 1)..<starts.count {
+                running += forwardStep
+                starts[index] = running
+            }
+        }
+
+        var resolved = starts.map { $0 ?? 0 }
+        if !resolved.isEmpty {
+            resolved[0] = max(0, resolved[0])
+        }
+        for index in 1..<resolved.count {
+            resolved[index] = max(resolved[index], resolved[index - 1])
+        }
+
+        verseStartTimes = resolved
+    }
+
+    private func estimatedVerseDurationStep() -> Double {
+        guard duration > 0, !verses.isEmpty else { return 2.5 }
+        return max(0.5, duration / Double(verses.count))
+    }
+
+    private func verseIndex(for playbackTime: Double, in verseStarts: [Double]) -> Int {
+        guard !verseStarts.isEmpty else { return 0 }
+
+        let safeTime = max(0, playbackTime)
+        var low = 0
+        var high = verseStarts.count
+
+        while low < high {
+            let mid = (low + high) / 2
+            if verseStarts[mid] <= safeTime {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+
+        return min(max(0, low - 1), verseStarts.count - 1)
+    }
+
+    private func weightedFallbackVerseIndex() -> Int {
+        guard duration > 0 else { return 0 }
+        guard !verses.isEmpty else { return 0 }
+
+        let safeTime = min(max(0, currentTime), duration)
+        let weights = verses.map { Double(max(1, $0.textArabic.count)) }
+        let totalWeight = weights.reduce(0, +)
+        guard totalWeight > 0 else { return 0 }
+
+        let target = (safeTime / duration) * totalWeight
+        var cumulative: Double = 0
+
+        for (index, weight) in weights.enumerated() {
+            cumulative += weight
+            if target <= cumulative {
+                return index
+            }
+        }
+
+        return verses.count - 1
+    }
+
+    private func weightedFallbackTime(forVerseIndex index: Int) -> Double {
+        guard duration > 0 else { return 0 }
+        guard !verses.isEmpty else { return 0 }
+
+        let clampedIndex = min(max(0, index), verses.count - 1)
+        let weights = verses.map { Double(max(1, $0.textArabic.count)) }
+        let totalWeight = weights.reduce(0, +)
+
+        guard totalWeight > 0 else {
+            let denominator = Double(max(1, verses.count - 1))
+            return (Double(clampedIndex) / denominator) * duration
+        }
+
+        let precedingWeight = weights.prefix(clampedIndex).reduce(0, +)
+        return min(duration, max(0, (precedingWeight / totalWeight) * duration))
     }
 
     private func bindPlayerState() {
@@ -463,11 +728,16 @@ final class PlayerViewModel: ObservableObject {
 
     private func resolvePlaybackSource(chapterID: Int, reciterID: Int) async throws -> PlaybackSource {
         if let localURL = await cacheManager.cachedFileURL(chapterID: chapterID, reciterID: reciterID) {
-            return PlaybackSource(playbackURL: localURL, isCached: true)
+            return PlaybackSource(playbackURL: localURL, isCached: true, verseTimings: [])
         }
 
-        let remoteURL = try await resolveRemoteURL(chapterID: chapterID, reciterID: reciterID)
-        return PlaybackSource(playbackURL: remoteURL, isCached: false)
+        let chapterAudio = try await service.fetchChapterAudio(chapterID: chapterID, reciterID: reciterID)
+        await cacheManager.storeRemoteURL(chapterAudio.audioURL, chapterID: chapterID, reciterID: reciterID)
+        return PlaybackSource(
+            playbackURL: chapterAudio.audioURL,
+            isCached: false,
+            verseTimings: chapterAudio.verseTimings
+        )
     }
 
     private func resolveRemoteURL(chapterID: Int, reciterID: Int) async throws -> URL {
@@ -475,13 +745,14 @@ final class PlayerViewModel: ObservableObject {
             return cachedRemoteURL
         }
 
-        let remoteURL = try await service.fetchAudioURL(chapterID: chapterID, reciterID: reciterID)
-        await cacheManager.storeRemoteURL(remoteURL, chapterID: chapterID, reciterID: reciterID)
-        return remoteURL
+        let chapterAudio = try await service.fetchChapterAudio(chapterID: chapterID, reciterID: reciterID)
+        await cacheManager.storeRemoteURL(chapterAudio.audioURL, chapterID: chapterID, reciterID: reciterID)
+        return chapterAudio.audioURL
     }
 }
 
 private struct PlaybackSource {
     let playbackURL: URL
     let isCached: Bool
+    let verseTimings: [QuranVerseTiming]
 }
