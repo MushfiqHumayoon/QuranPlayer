@@ -179,7 +179,12 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func seek(to seconds: Double) {
-        player.seek(to: seconds)
+        let upperBound = duration > 0 ? duration : seconds
+        let safeTime = min(max(0, seconds), upperBound)
+        currentTime = safeTime
+        player.seek(to: safeTime)
+        updateNowPlayingInfo()
+        persistPlaybackState(force: true)
     }
 
     func seek(toVerseIndex index: Int) {
@@ -195,7 +200,6 @@ final class PlayerViewModel: ObservableObject {
         }
 
         seek(to: targetTime)
-        persistPlaybackState(force: true)
     }
 
     func skipForward() {
@@ -584,6 +588,19 @@ final class PlayerViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] value in
                 self?.isReadyToPlay = value
+            }
+            .store(in: &cancellables)
+
+        player.$playbackCompletionCount
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                guard self.canGoToNextChapter else {
+                    self.persistPlaybackState(force: true)
+                    return
+                }
+                self.playNextChapter()
             }
             .store(in: &cancellables)
     }

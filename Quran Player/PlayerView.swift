@@ -16,6 +16,7 @@ struct PlayerView: View {
     @State private var isOptionsSheetPresented = false
     @State private var currentVerseOffscreenDirection: CurrentVerseJumpDirection?
     @State private var jumpToCurrentVerseRequestID = 0
+    @State private var scrollToTopRequestID = 0
     @State private var backgroundFlowProgress = false
 
     var body: some View {
@@ -186,6 +187,7 @@ struct PlayerView: View {
         }
         .onChange(of: viewModel.currentChapter?.id) { _, _ in
             currentVerseOffscreenDirection = nil
+            scrollToTopRequestID += 1
         }
     }
 
@@ -240,9 +242,12 @@ struct PlayerView: View {
             VerseLyricsList(
                 verses: viewModel.verses,
                 highlightedIndex: viewModel.currentVerseIndex,
+                scrollToTopRequestID: scrollToTopRequestID,
                 scrollToCurrentVerseRequestID: jumpToCurrentVerseRequestID,
                 onVerseTap: { verseIndex in
+                    isEditingSlider = false
                     viewModel.seek(toVerseIndex: verseIndex)
+                    scrubTime = viewModel.currentTime
                 },
                 onCurrentVerseVisibilityChange: { direction in
                     currentVerseOffscreenDirection = direction
@@ -398,6 +403,7 @@ struct PlayerView: View {
 private struct VerseLyricsList: View {
     let verses: [QuranVerse]
     let highlightedIndex: Int?
+    let scrollToTopRequestID: Int
     let scrollToCurrentVerseRequestID: Int
     let onVerseTap: (Int) -> Void
     let onCurrentVerseVisibilityChange: (CurrentVerseJumpDirection?) -> Void
@@ -405,11 +411,18 @@ private struct VerseLyricsList: View {
     @State private var rowFramesByIndex: [Int: CGRect] = [:]
     @State private var viewportFrame: CGRect = .zero
     @State private var lastReportedDirection: CurrentVerseJumpDirection?
+    @State private var lastHandledScrollToTopRequestID: Int?
+
+    private let topAnchorID = "verse-list-top-anchor"
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 10) {
+                    Color.clear
+                        .frame(height: 0)
+                        .id(topAnchorID)
+
                     ForEach(verses.indices, id: \.self) { index in
                         VerseLyricsRow(
                             index: index,
@@ -451,11 +464,14 @@ private struct VerseLyricsList: View {
                 updateCurrentVerseDirection()
             }
             .onAppear {
-                scrollToHighlightedVerse(proxy: proxy, animated: false)
+                handleScrollToTopRequest(proxy: proxy, animated: false)
                 updateCurrentVerseDirection()
             }
             .onChange(of: highlightedIndex) { _, _ in
                 updateCurrentVerseDirection()
+            }
+            .onChange(of: scrollToTopRequestID) { _, _ in
+                handleScrollToTopRequest(proxy: proxy, animated: true)
             }
             .onChange(of: scrollToCurrentVerseRequestID) { _, _ in
                 scrollToHighlightedVerse(proxy: proxy, animated: true)
@@ -477,6 +493,23 @@ private struct VerseLyricsList: View {
             }
         } else {
             proxy.scrollTo(verseID, anchor: .center)
+        }
+    }
+
+    private func handleScrollToTopRequest(proxy: ScrollViewProxy, animated: Bool) {
+        guard lastHandledScrollToTopRequestID != scrollToTopRequestID else { return }
+        lastHandledScrollToTopRequestID = scrollToTopRequestID
+        scrollToTop(proxy: proxy, animated: animated)
+        reportCurrentVerseDirection(nil)
+    }
+
+    private func scrollToTop(proxy: ScrollViewProxy, animated: Bool) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.32)) {
+                proxy.scrollTo(topAnchorID, anchor: .top)
+            }
+        } else {
+            proxy.scrollTo(topAnchorID, anchor: .top)
         }
     }
 
