@@ -45,6 +45,9 @@ struct HomeView: View {
     @State private var isChapterSearchPresented = false
     @State private var backgroundFlowProgress = false
     @State private var browseFilter: BrowseFilter = .chapters
+    @State private var hasRunEntranceAnimation = false
+    @State private var hasShownList = false
+    @State private var hasShownMiniPlayer = false
 
     @MainActor
     init(playerViewModel: PlayerViewModel, viewModel: HomeViewModel? = nil) {
@@ -85,11 +88,15 @@ struct HomeView: View {
                         .foregroundStyle(.white.opacity(0.9))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        if browseFilter == .chapters {
-                            chapterList
-                        } else {
-                            juzList
+                        Group {
+                            if browseFilter == .chapters {
+                                chapterList
+                            } else {
+                                juzList
+                            }
                         }
+                        .opacity(hasShownList ? 1 : 0)
+                        .offset(y: hasShownList ? 0 : 24)
                     }
                 }
             }
@@ -116,6 +123,8 @@ struct HomeView: View {
                         playerViewModel: playerViewModel,
                         isPlayerPresented: $isPlayerPresented
                     )
+                    .opacity(hasShownMiniPlayer ? 1 : 0)
+                    .offset(y: hasShownMiniPlayer ? 0 : 32)
                 }
             }
         }
@@ -147,6 +156,19 @@ struct HomeView: View {
         }
         .onAppear {
             startBackgroundAnimation()
+            if !viewModel.chapters.isEmpty || viewModel.errorMessage != nil {
+                runEntranceAnimationIfNeeded()
+            }
+        }
+        .onChange(of: viewModel.chapters) { _, chapters in
+            if !chapters.isEmpty {
+                runEntranceAnimationIfNeeded()
+            }
+        }
+        .onChange(of: viewModel.errorMessage) { _, errorMessage in
+            if errorMessage != nil {
+                runEntranceAnimationIfNeeded()
+            }
         }
     }
 
@@ -187,7 +209,7 @@ struct HomeView: View {
                 .contentShape(Rectangle())
                 .padding(.bottom, filteredChapters.last == chapter ? 100 : 0)
             }
-            .listRowBackground(Color.white.opacity(0.08))
+            .listRowBackground(Color.clear)
             .listRowSeparatorTint(.white.opacity(0.12))
             .buttonStyle(.plain)
             .disabled(viewModel.selectedReciter == nil)
@@ -402,6 +424,22 @@ struct HomeView: View {
         guard !backgroundFlowProgress else { return }
         withAnimation(.linear(duration: 18).repeatForever(autoreverses: true)) {
             backgroundFlowProgress = true
+        }
+    }
+
+    private func runEntranceAnimationIfNeeded() {
+        guard !hasRunEntranceAnimation else { return }
+        hasRunEntranceAnimation = true
+
+        withAnimation(.easeOut(duration: 0.38)) {
+            hasShownList = true
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 260_000_000)
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                hasShownMiniPlayer = true
+            }
         }
     }
 }
