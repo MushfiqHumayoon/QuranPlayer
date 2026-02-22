@@ -34,10 +34,39 @@ struct QuranReciter: Identifiable, Codable, Hashable {
     }
 }
 
+struct QuranTranslation: Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let languageName: String
+    let authorName: String?
+
+    var displayName: String {
+        let language = languageName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let translationName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if language.isEmpty {
+            return translationName
+        }
+        if translationName.isEmpty {
+            return language
+        }
+
+        return "\(language) - \(translationName)"
+    }
+
+    static let fallbackEnglish = QuranTranslation(
+        id: 20,
+        name: "Sahih International",
+        languageName: "English",
+        authorName: nil
+    )
+}
+
 struct QuranVerse: Identifiable, Hashable {
     let id: Int
     let verseKey: String
     let textArabic: String
+    let textTranslation: String?
 }
 
 struct QuranVerseTiming: Hashable {

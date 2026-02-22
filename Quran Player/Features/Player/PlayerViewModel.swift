@@ -41,8 +41,11 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var isChapterCached = false
     @Published private(set) var isDownloadingCurrentChapter = false
     @Published private(set) var isLoadingVerses = false
+    @Published private(set) var isLoadingTranslations = false
     @Published private(set) var verseStartTimes: [Double] = []
     @Published private(set) var sleepTimerRemaining: TimeInterval?
+    @Published private(set) var availableTranslations: [QuranTranslation] = [QuranTranslation.fallbackEnglish]
+    @Published private(set) var selectedTranslationID: Int = QuranTranslation.fallbackEnglish.id
 
     let player: AudioPlayerManager
 
@@ -58,6 +61,7 @@ final class PlayerViewModel: ObservableObject {
     private var sleepTimerTask: Task<Void, Never>?
     private var sleepTimerTicker: AnyCancellable?
     private var lastPlaybackStoreSaveDate = Date.distantPast
+    private var translationsLoadTask: Task<Void, Never>?
 
     init(
         service: (any QuranServiceProtocol)? = nil,
@@ -71,6 +75,7 @@ final class PlayerViewModel: ObservableObject {
         self.playbackStore = playbackStore ?? .shared
         bindPlayerState()
         configureRemoteCommands()
+        loadAvailableTranslations()
     }
 
     var isSessionActive: Bool {
@@ -109,6 +114,10 @@ final class PlayerViewModel: ObservableObject {
         return weightedFallbackVerseIndex()
     }
 
+    var selectedTranslation: QuranTranslation? {
+        availableTranslations.first(where: { $0.id == selectedTranslationID })
+    }
+
     func startPlayback(chapter: QuranChapter, chapters: [QuranChapter], reciter: QuranReciter) {
         self.chapters = chapters
         self.reciter = reciter
@@ -126,6 +135,20 @@ final class PlayerViewModel: ObservableObject {
         guard let currentChapter, isSessionActive else { return }
         let shouldAutoplay = isPlaying || isLoadingAudio
         load(chapter: currentChapter, autoplay: shouldAutoplay, startTime: currentTime)
+    }
+
+    func selectTranslation(id translationID: Int) {
+        guard availableTranslations.contains(where: { $0.id == translationID }) else { return }
+        guard selectedTranslationID != translationID else { return }
+
+        selectedTranslationID = translationID
+
+        guard currentChapter != nil else { return }
+        refreshCurrentChapterVerses()
+    }
+
+    func reloadTranslations() {
+        loadAvailableTranslations()
     }
 
     func restoreSessionIfPossible(chapters: [QuranChapter], reciters: [QuranReciter]) {
@@ -288,6 +311,39 @@ final class PlayerViewModel: ObservableObject {
         }
     }
 
+    func refreshCurrentChapterVerses() {
+        guard let chapterID = currentChapter?.id else { return }
+        let translationID = selectedTranslationID
+
+        versesLoadTask?.cancel()
+        isLoadingVerses = true
+
+        versesLoadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let loadedVerses = try await self.service.fetchVerses(
+                    chapterID: chapterID,
+                    translationID: translationID
+                )
+                await MainActor.run {
+                    guard self.currentChapter?.id == chapterID else { return }
+                    guard self.selectedTranslationID == translationID else { return }
+                    self.verses = loadedVerses
+                    self.rebuildVerseStartTimes()
+                    self.isLoadingVerses = false
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run {
+                    guard self.currentChapter?.id == chapterID else { return }
+                    guard self.selectedTranslationID == translationID else { return }
+                    self.isLoadingVerses = false
+                }
+            }
+        }
+    }
+
     private var chapterIndex: Int? {
         guard let currentChapter else { return nil }
         return chapters.firstIndex(where: { $0.id == currentChapter.id })
@@ -311,13 +367,18 @@ final class PlayerViewModel: ObservableObject {
         updateNowPlayingInfo()
         persistPlaybackState(force: true)
 
+        let translationID = selectedTranslationID
         versesLoadTask?.cancel()
         versesLoadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let loadedVerses = try await self.service.fetchVerses(chapterID: chapterID)
+                let loadedVerses = try await self.service.fetchVerses(
+                    chapterID: chapterID,
+                    translationID: translationID
+                )
                 await MainActor.run {
                     guard self.currentChapter?.id == chapterID else { return }
+                    guard self.selectedTranslationID == translationID else { return }
                     self.verses = loadedVerses
                     self.isLoadingVerses = false
                     self.rebuildVerseStartTimes()
@@ -327,6 +388,7 @@ final class PlayerViewModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     guard self.currentChapter?.id == chapterID else { return }
+                    guard self.selectedTranslationID == translationID else { return }
                     self.verses = []
                     self.isLoadingVerses = false
                     self.verseStartTimes = []
@@ -765,6 +827,38 @@ final class PlayerViewModel: ObservableObject {
         let chapterAudio = try await service.fetchChapterAudio(chapterID: chapterID, reciterID: reciterID)
         await cacheManager.storeRemoteURL(chapterAudio.audioURL, chapterID: chapterID, reciterID: reciterID)
         return chapterAudio.audioURL
+    }
+
+    private func loadAvailableTranslations() {
+        translationsLoadTask?.cancel()
+        isLoadingTranslations = true
+
+        translationsLoadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let loadedTranslations = try await self.service.fetchTranslations()
+                await MainActor.run {
+                    if !loadedTranslations.isEmpty {
+                        self.availableTranslations = loadedTranslations
+                    }
+
+                    let previousTranslationID = self.selectedTranslationID
+                    if !self.availableTranslations.contains(where: { $0.id == previousTranslationID }) {
+                        self.selectedTranslationID = self.availableTranslations.first?.id ?? QuranTranslation.fallbackEnglish.id
+                    }
+
+                    self.isLoadingTranslations = false
+
+                    if self.currentChapter != nil, previousTranslationID != self.selectedTranslationID {
+                        self.refreshCurrentChapterVerses()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoadingTranslations = false
+                }
+            }
+        }
     }
 }
 

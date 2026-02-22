@@ -18,6 +18,7 @@ struct PlayerView: View {
     @State private var jumpToCurrentVerseRequestID = 0
     @State private var scrollToTopRequestID = 0
     @State private var backgroundFlowProgress = false
+    @State private var isVerseDetailPresented = false
 
     var body: some View {
         Group {
@@ -40,6 +41,12 @@ struct PlayerView: View {
             PlayerOptionsSheet()
                 .environmentObject(viewModel)
                 .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isVerseDetailPresented) {
+            VerseDetailFullScreen()
+                .environmentObject(viewModel)
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .alert("Playback Error", isPresented: isShowingError) {
@@ -151,11 +158,6 @@ struct PlayerView: View {
 
     private func metadata(chapter: QuranChapter) -> some View {
         VStack(spacing: 8) {
-            Text(viewModel.reciter?.reciterName ?? "Quran")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.7))
-                .lineLimit(1)
-            
             if viewModel.isDownloadingCurrentChapter {
                 Label("Downloading for offline playback", systemImage: "arrow.down.circle")
                     .font(.caption)
@@ -193,10 +195,11 @@ struct PlayerView: View {
 
     private var versesSectionHeader: some View {
         HStack {
-            Text("Verses")
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.9))
-
+            Text(viewModel.reciter?.reciterName ?? "Quran")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.7))
+                .lineLimit(1)
+            
             Spacer()
 
             if let verseIndex = viewModel.currentVerseIndex, !viewModel.verses.isEmpty {
@@ -245,6 +248,11 @@ struct PlayerView: View {
                 scrollToTopRequestID: scrollToTopRequestID,
                 scrollToCurrentVerseRequestID: jumpToCurrentVerseRequestID,
                 onVerseTap: { verseIndex in
+                    if verseIndex == viewModel.currentVerseIndex {
+                        isVerseDetailPresented = true
+                        return
+                    }
+
                     isEditingSlider = false
                     viewModel.seek(toVerseIndex: verseIndex)
                     scrubTime = viewModel.currentTime
@@ -289,13 +297,12 @@ struct PlayerView: View {
     }
 
     private func bottomPlaybackBar(chapter: QuranChapter) -> some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 8) {
             progressSection
             controls(chapter: chapter)
         }
         .padding(.horizontal, 24)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
         .background(
             Rectangle()
@@ -412,6 +419,7 @@ private struct VerseLyricsList: View {
     @State private var viewportFrame: CGRect = .zero
     @State private var lastReportedDirection: CurrentVerseJumpDirection?
     @State private var lastHandledScrollToTopRequestID: Int?
+    @State private var hasHandledInitialScroll = false
 
     private let topAnchorID = "verse-list-top-anchor"
 
@@ -464,10 +472,15 @@ private struct VerseLyricsList: View {
                 updateCurrentVerseDirection()
             }
             .onAppear {
-                handleScrollToTopRequest(proxy: proxy, animated: false)
+                handleInitialScroll(proxy: proxy)
                 updateCurrentVerseDirection()
             }
             .onChange(of: highlightedIndex) { _, _ in
+                handleInitialScroll(proxy: proxy)
+                updateCurrentVerseDirection()
+            }
+            .onChange(of: verses.count) { _, _ in
+                handleInitialScroll(proxy: proxy)
                 updateCurrentVerseDirection()
             }
             .onChange(of: scrollToTopRequestID) { _, _ in
@@ -501,6 +514,24 @@ private struct VerseLyricsList: View {
         lastHandledScrollToTopRequestID = scrollToTopRequestID
         scrollToTop(proxy: proxy, animated: animated)
         reportCurrentVerseDirection(nil)
+    }
+
+    private func handleInitialScroll(proxy: ScrollViewProxy) {
+        guard !hasHandledInitialScroll else { return }
+        guard !verses.isEmpty else { return }
+
+        guard let highlightedIndex, verses.indices.contains(highlightedIndex) else {
+            handleScrollToTopRequest(proxy: proxy, animated: false)
+            return
+        }
+
+        hasHandledInitialScroll = true
+
+        // Defer to next run loop so row IDs are in the hierarchy before scrolling.
+        DispatchQueue.main.async {
+            scrollToHighlightedVerse(proxy: proxy, animated: false)
+            reportCurrentVerseDirection(nil)
+        }
     }
 
     private func scrollToTop(proxy: ScrollViewProxy, animated: Bool) {
@@ -558,8 +589,8 @@ private struct VerseLyricsRow: View {
                 .frame(width: 30, alignment: .leading)
 
             Text(verse.textArabic)
-                .font(isCurrent ? .title3 : .body)
-                .foregroundStyle(isCurrent ? .white : .white.opacity(0.82))
+                .font(.title3)
+                .foregroundStyle(isCurrent ? .white : .white.opacity(0.80))
                 .multilineTextAlignment(.trailing)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .trailing)
