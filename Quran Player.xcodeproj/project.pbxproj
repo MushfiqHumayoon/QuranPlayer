@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		0189C22B2F4C31A2009F778B /* Adapty in Frameworks */ = {isa = PBXBuildFile; productRef = 0189C22A2F4C31A2009F778B /* Adapty */; };
+		0189C22D2F4C31A2009F778B /* AdaptyUI in Frameworks */ = {isa = PBXBuildFile; productRef = 0189C22C2F4C31A2009F778B /* AdaptyUI */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		0189B4A92F47EA0B009F778B /* Quran Player.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Quran Player.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +28,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0189C22B2F4C31A2009F778B /* Adapty in Frameworks */,
+				0189C22D2F4C31A2009F778B /* AdaptyUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +72,8 @@
 			);
 			name = "Quran Player";
 			packageProductDependencies = (
+				0189C22A2F4C31A2009F778B /* Adapty */,
+				0189C22C2F4C31A2009F778B /* AdaptyUI */,
 			);
 			productName = "Quran Player";
 			productReference = 0189B4A92F47EA0B009F778B /* Quran Player.app */;
@@ -94,6 +103,9 @@
 			);
 			mainGroup = 0189B4A02F47EA0B009F778B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				0189C2292F4C31A2009F778B /* XCRemoteSwiftPackageReference "AdaptySDK-iOS" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0189B4AA2F47EA0B009F778B /* Products */;
 			projectDirPath = "";
@@ -326,6 +338,30 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		0189C2292F4C31A2009F778B /* XCRemoteSwiftPackageReference "AdaptySDK-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/adaptyteam/AdaptySDK-iOS.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.15.5;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0189C22A2F4C31A2009F778B /* Adapty */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0189C2292F4C31A2009F778B /* XCRemoteSwiftPackageReference "AdaptySDK-iOS" */;
+			productName = Adapty;
+		};
+		0189C22C2F4C31A2009F778B /* AdaptyUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0189C2292F4C31A2009F778B /* XCRemoteSwiftPackageReference "AdaptySDK-iOS" */;
+			productName = AdaptyUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 0189B4A12F47EA0B009F778B /* Project object */;
 }

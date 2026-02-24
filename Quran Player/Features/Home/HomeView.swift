@@ -5,46 +5,19 @@
 //  Created by Codex on 20/02/26.
 //
 
+import AdaptyUI
 import SwiftUI
 
 struct HomeView: View {
-    private enum BrowseFilter: String, CaseIterable, Identifiable {
-        case chapters = "Chapters"
-        case juz = "Juz"
-
-        var id: String { rawValue }
-
-        var searchPrompt: String {
-            switch self {
-            case .chapters:
-                return "Search chapters"
-            case .juz:
-                return "Search juz"
-            }
-        }
-    }
-
-    private struct JuzBrowseItem: Identifiable, Hashable {
-        let id: Int
-        let startChapter: QuranChapter
-        let endChapter: QuranChapter
-    }
-
-    private static let juzChapterRanges: [ClosedRange<Int>] = [
-        1...2, 2...2, 2...3, 3...4, 4...4, 4...5, 5...6, 6...7, 7...8, 8...9,
-        9...11, 11...12, 12...14, 15...16, 17...18, 18...20, 21...22, 23...25, 25...27, 27...29,
-        29...33, 33...36, 36...39, 39...41, 41...45, 46...51, 51...57, 58...66, 67...77, 78...114
-    ]
-
     @Environment(\.isSearching) private var isSearching
     let playerViewModel: PlayerViewModel
     @StateObject private var viewModel: HomeViewModel
+    @StateObject private var paywallManager = PaywallManager()
     @State private var isPlayerPresented = false
     @State private var hasRestoredPlayback = false
     @State private var chapterSearchText = ""
     @State private var isChapterSearchPresented = false
     @State private var backgroundFlowProgress = false
-    @State private var browseFilter: BrowseFilter = .chapters
     @State private var hasRunEntranceAnimation = false
     @State private var hasShownList = false
     @State private var hasShownMiniPlayer = false
@@ -77,26 +50,16 @@ struct HomeView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if isFilteredContentEmpty {
                         ContentUnavailableView(
-                            browseFilter == .chapters ? "No matching chapter" : "No matching juz",
+                            "No matching chapter",
                             systemImage: "magnifyingglass",
-                            description: Text(
-                                browseFilter == .chapters
-                                    ? "Try a different chapter name or number."
-                                    : "Try a different juz number."
-                            )
+                            description: Text("Try a different chapter name or number.")
                         )
                         .foregroundStyle(.white.opacity(0.9))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        Group {
-                            if browseFilter == .chapters {
-                                chapterList
-                            } else {
-                                juzList
-                            }
-                        }
-                        .opacity(hasShownList ? 1 : 0)
-                        .offset(y: hasShownList ? 0 : 24)
+                        chapterList
+                            .opacity(hasShownList ? 1 : 0)
+                            .offset(y: hasShownList ? 0 : 24)
                     }
                 }
             }
@@ -104,19 +67,33 @@ struct HomeView: View {
             .searchable(
                 text: $chapterSearchText,
                 isPresented: $isChapterSearchPresented,
-                prompt: browseFilter.searchPrompt
+                prompt: "Search chapters"
             )
             .tint(.white)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    browseFilterMenu
+                    proButton
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
                     reciterMenu
                 }
             }
+            .paywall(
+                isPresented: $paywallManager.isPresented,
+                paywallConfiguration: paywallManager.paywallConfiguration,
+                didFailPurchase: { _, error in
+                    paywallManager.handleFailedPurchase(error)
+                },
+                didFinishRestore: { _ in },
+                didFailRestore: { error in
+                    paywallManager.handleFailedRestore(error)
+                },
+                didFailRendering: { error in
+                    paywallManager.handleFailedRendering(error)
+                }
+            )
             .safeAreaInset(edge: .bottom) {
                 if shouldShowMiniPlayer {
                     HomeMiniPlayerContainer(
@@ -150,10 +127,6 @@ struct HomeView: View {
             guard let reciter = viewModel.selectedReciter else { return }
             playerViewModel.updateReciter(reciter)
         }
-        .onChange(of: browseFilter) { _, _ in
-            chapterSearchText = ""
-            isChapterSearchPresented = false
-        }
         .onAppear {
             startBackgroundAnimation()
             if !viewModel.chapters.isEmpty || viewModel.errorMessage != nil {
@@ -169,6 +142,13 @@ struct HomeView: View {
             if errorMessage != nil {
                 runEntranceAnimationIfNeeded()
             }
+        }
+        .alert(item: $paywallManager.presentationError) { paywallError in
+            Alert(
+                title: Text("Paywall Error"),
+                message: Text(paywallError.message),
+                dismissButton: .default(Text("OK"))
+            )
         }
     }
 
@@ -224,75 +204,19 @@ struct HomeView: View {
         }
     }
 
-    private var juzList: some View {
-        List(filteredJuzItems) { juzItem in
-            Button {
-                guard let reciter = viewModel.selectedReciter else { return }
-                playerViewModel.startPlayback(
-                    chapter: juzItem.startChapter,
-                    chapters: viewModel.chapters,
-                    reciter: reciter
-                )
-                isPlayerPresented = true
-            } label: {
-                HStack(spacing: 14) {
-                    Text("\(juzItem.id)")
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.66))
-                        .frame(width: 32, alignment: .leading)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Juz \(juzItem.id)")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-
-                        Text(juzSubtitle(for: juzItem))
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.72))
-                    }
-
-                    Spacer()
-
-                    Text(juzItem.startChapter.nameArabic)
-                        .font(.title3)
-                        .foregroundStyle(.white.opacity(0.9))
-                }
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-                .padding(.bottom, filteredJuzItems.last == juzItem ? 100 : 0)
-            }
-            .listRowBackground(Color.white.opacity(0.08))
-            .listRowSeparatorTint(.white.opacity(0.12))
-            .buttonStyle(.plain)
-            .disabled(viewModel.selectedReciter == nil)
-        }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .refreshable {
-            await viewModel.load()
-            if let reciterID = playerViewModel.reciter?.id {
-                viewModel.selectedReciterID = reciterID
-            }
-        }
-    }
-
-    private var browseFilterMenu: some View {
-        Menu {
-            ForEach(BrowseFilter.allCases) { filter in
-                Button {
-                    browseFilter = filter
-                } label: {
-                    if browseFilter == filter {
-                        Label(filter.rawValue, systemImage: "checkmark")
-                    } else {
-                        Text(filter.rawValue)
-                    }
-                }
-            }
+    private var proButton: some View {
+        Button {
+            paywallManager.presentPaywall()
         } label: {
-            Label(browseFilter.rawValue, systemImage: "line.3.horizontal.decrease.circle")
-                .font(.subheadline.weight(.semibold))
+            Text("Pro")
+                .font(.caption.weight(.bold))
+                .kerning(0.6)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(.clear)
         }
+        .disabled(paywallManager.isLoading)
+        .opacity(paywallManager.isLoading ? 0.7 : 1)
     }
 
     @ViewBuilder
@@ -344,46 +268,8 @@ struct HomeView: View {
         }
     }
 
-    private var allJuzItems: [JuzBrowseItem] {
-        Self.juzChapterRanges.enumerated().compactMap { offset, range in
-            guard let startChapter = viewModel.chapters.first(where: { $0.id == range.lowerBound }) else {
-                return nil
-            }
-            let endChapter = viewModel.chapters.first(where: { $0.id == range.upperBound }) ?? startChapter
-            return JuzBrowseItem(id: offset + 1, startChapter: startChapter, endChapter: endChapter)
-        }
-    }
-
-    private var filteredJuzItems: [JuzBrowseItem] {
-        let query = chapterSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return allJuzItems }
-
-        return allJuzItems.filter { juzItem in
-            if "\(juzItem.id)".contains(query) { return true }
-            if "juz \(juzItem.id)".localizedCaseInsensitiveContains(query) { return true }
-            if juzItem.startChapter.nameSimple.localizedCaseInsensitiveContains(query) { return true }
-            if juzItem.endChapter.nameSimple.localizedCaseInsensitiveContains(query) { return true }
-            if juzItem.startChapter.nameArabic.contains(query) { return true }
-            if juzItem.endChapter.nameArabic.contains(query) { return true }
-            return false
-        }
-    }
-
     private var isFilteredContentEmpty: Bool {
-        switch browseFilter {
-        case .chapters:
-            return filteredChapters.isEmpty
-        case .juz:
-            return filteredJuzItems.isEmpty
-        }
-    }
-
-    private func juzSubtitle(for juzItem: JuzBrowseItem) -> String {
-        if juzItem.startChapter.id == juzItem.endChapter.id {
-            return "Surah \(juzItem.startChapter.id) \(juzItem.startChapter.nameSimple)"
-        }
-
-        return "Surah \(juzItem.startChapter.id) to \(juzItem.endChapter.id)"
+        filteredChapters.isEmpty
     }
 
     private var shouldShowMiniPlayer: Bool {
