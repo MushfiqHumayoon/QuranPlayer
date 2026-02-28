@@ -21,6 +21,7 @@ final class PaywallManager: ObservableObject {
     @Published var isPresented = false
     @Published private(set) var isLoading = false
     @Published private(set) var paywallConfiguration: AdaptyUI.PaywallConfiguration?
+    @Published private(set) var isSubscribed = false
     @Published var presentationError: PresentationError?
 
     private let placementId: String
@@ -98,13 +99,35 @@ final class PaywallManager: ObservableObject {
         report(error)
     }
 
+    func handleDidFinishPurchase(_ result: AdaptyPurchaseResult) {
+        guard let profile = result.profile else { return }
+        updateSubscriptionStatus(with: profile)
+    }
+
     func handleFailedRestore(_ error: AdaptyError) {
         report(error)
+    }
+
+    func handleDidFinishRestore(_ profile: AdaptyProfile) {
+        updateSubscriptionStatus(with: profile)
+    }
+
+    func refreshSubscriptionStatus() async {
+        do {
+            let profile = try await Adapty.getProfile()
+            updateSubscriptionStatus(with: profile)
+        } catch {
+            // Keep the last known entitlement state if profile refresh fails.
+        }
     }
 
     func handleFailedRendering(_ error: AdaptyUIError) {
         isPresented = false
         report(error)
+    }
+
+    private func updateSubscriptionStatus(with profile: AdaptyProfile) {
+        isSubscribed = profile.accessLevels.values.contains(where: \.isActive)
     }
 
     private func report(_ error: Error) {

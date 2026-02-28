@@ -5,14 +5,13 @@
 //  Created by Codex on 20/02/26.
 //
 
-import AdaptyUI
 import SwiftUI
 
 struct HomeView: View {
     @Environment(\.isSearching) private var isSearching
+    @EnvironmentObject private var paywallManager: PaywallManager
     let playerViewModel: PlayerViewModel
     @StateObject private var viewModel: HomeViewModel
-    @StateObject private var paywallManager = PaywallManager()
     @State private var isPlayerPresented = false
     @State private var hasRestoredPlayback = false
     @State private var chapterSearchText = ""
@@ -80,20 +79,6 @@ struct HomeView: View {
                     reciterMenu
                 }
             }
-            .paywall(
-                isPresented: $paywallManager.isPresented,
-                paywallConfiguration: paywallManager.paywallConfiguration,
-                didFailPurchase: { _, error in
-                    paywallManager.handleFailedPurchase(error)
-                },
-                didFinishRestore: { _ in },
-                didFailRestore: { error in
-                    paywallManager.handleFailedRestore(error)
-                },
-                didFailRendering: { error in
-                    paywallManager.handleFailedRendering(error)
-                }
-            )
             .safeAreaInset(edge: .bottom) {
                 if shouldShowMiniPlayer {
                     HomeMiniPlayerContainer(
@@ -142,13 +127,6 @@ struct HomeView: View {
             if errorMessage != nil {
                 runEntranceAnimationIfNeeded()
             }
-        }
-        .alert(item: $paywallManager.presentationError) { paywallError in
-            Alert(
-                title: Text("Paywall Error"),
-                message: Text(paywallError.message),
-                dismissButton: .default(Text("OK"))
-            )
         }
     }
 

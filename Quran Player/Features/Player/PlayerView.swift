@@ -19,6 +19,7 @@ struct PlayerView: View {
     @State private var scrollToTopRequestID = 0
     @State private var backgroundFlowProgress = false
     @State private var isVerseDetailPresented = false
+    @State private var shouldPresentPaywallAfterSheetDismiss = false
 
     var body: some View {
         Group {
@@ -38,7 +39,9 @@ struct PlayerView: View {
             }
         }
         .sheet(isPresented: $isOptionsSheetPresented) {
-            PlayerOptionsSheet()
+            PlayerOptionsSheet(
+                onRequestSubscriptionAccess: requestSubscriptionAccessSafely
+            )
                 .environmentObject(viewModel)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
@@ -55,6 +58,12 @@ struct PlayerView: View {
             }
         } message: {
             Text(viewModel.errorMessage ?? "Unknown error")
+        }
+        .onChange(of: isOptionsSheetPresented) { _, _ in
+            presentQueuedPaywallIfNeeded()
+        }
+        .onChange(of: isVerseDetailPresented) { _, _ in
+            presentQueuedPaywallIfNeeded()
         }
     }
 
@@ -369,6 +378,24 @@ struct PlayerView: View {
         return String(format: "%02d:%02d", minutes, remainingSeconds)
     }
 
+    private func requestSubscriptionAccessSafely() {
+        if isOptionsSheetPresented || isVerseDetailPresented {
+            shouldPresentPaywallAfterSheetDismiss = true
+            isOptionsSheetPresented = false
+            isVerseDetailPresented = false
+            return
+        }
+
+        viewModel.requestSubscriptionAccess?()
+    }
+
+    private func presentQueuedPaywallIfNeeded() {
+        guard shouldPresentPaywallAfterSheetDismiss else { return }
+        guard !isOptionsSheetPresented, !isVerseDetailPresented else { return }
+        shouldPresentPaywallAfterSheetDismiss = false
+        viewModel.requestSubscriptionAccess?()
+    }
+
     private var animatedTrendingBackground: some View {
         let flowStart = UnitPoint(x: 0.5, y: backgroundFlowProgress ? -0.15 : 1.15)
         let flowEnd = UnitPoint(x: 0.5, y: backgroundFlowProgress ? 0.85 : 2.15)
@@ -643,39 +670,56 @@ private struct VerseViewportFramePreferenceKey: PreferenceKey {
 
 private struct PlayerOptionsSheet: View {
     @EnvironmentObject private var viewModel: PlayerViewModel
+    let onRequestSubscriptionAccess: () -> Void
 
     var body: some View {
         NavigationStack {
             List {
                 Section("Offline") {
-                    if viewModel.isChapterCached {
-                        Label("Current chapter is downloaded", systemImage: "checkmark.circle.fill")
-                    } else if viewModel.isDownloadingCurrentChapter {
-                        Label("Downloading...", systemImage: "arrow.down.circle")
-                    } else {
+                    if !viewModel.isSubscribed {
                         Button {
-                            viewModel.downloadCurrentChapterForOffline()
+                            onRequestSubscriptionAccess()
                         } label: {
-                            Label("Download Current Chapter", systemImage: "arrow.down.circle")
+                            Label("Subscribe to Play Offline", systemImage: "lock.fill")
+                        }
+                    } else {
+                        if viewModel.isChapterCached {
+                            Label("Current chapter is downloaded", systemImage: "checkmark.circle.fill")
+                        } else if viewModel.isDownloadingCurrentChapter {
+                            Label("Downloading...", systemImage: "arrow.down.circle")
+                        } else {
+                            Button {
+                                viewModel.downloadCurrentChapterForOffline()
+                            } label: {
+                                Label("Download Current Chapter", systemImage: "arrow.down.circle")
+                            }
                         }
                     }
                 }
 
                 Section("Sleep Timer") {
-                    ForEach(SleepTimerPreset.allCases) { preset in
-                        Button(preset.title) {
-                            viewModel.setSleepTimer(preset)
+                    if !viewModel.isSubscribed {
+                        Button {
+                            onRequestSubscriptionAccess()
+                        } label: {
+                            Label("Subscribe to Enable Sleep Timer", systemImage: "lock.fill")
                         }
-                    }
-
-                    if viewModel.hasActiveSleepTimer {
-                        if let sleepTimerDisplayText = viewModel.sleepTimerDisplayText {
-                            Text("Remaining: \(sleepTimerDisplayText)")
-                                .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(SleepTimerPreset.allCases) { preset in
+                            Button(preset.title) {
+                                viewModel.setSleepTimer(preset)
+                            }
                         }
 
-                        Button("Cancel Sleep Timer", role: .destructive) {
-                            viewModel.cancelSleepTimer()
+                        if viewModel.hasActiveSleepTimer {
+                            if let sleepTimerDisplayText = viewModel.sleepTimerDisplayText {
+                                Text("Remaining: \(sleepTimerDisplayText)")
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Button("Cancel Sleep Timer", role: .destructive) {
+                                viewModel.cancelSleepTimer()
+                            }
                         }
                     }
                 }

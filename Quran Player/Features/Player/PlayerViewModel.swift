@@ -46,6 +46,7 @@ final class PlayerViewModel: ObservableObject {
     @Published private(set) var sleepTimerRemaining: TimeInterval?
     @Published private(set) var availableTranslations: [QuranTranslation] = [QuranTranslation.fallbackEnglish]
     @Published private(set) var selectedTranslationID: Int = QuranTranslation.fallbackEnglish.id
+    @Published private(set) var isSubscribed = false
 
     let player: AudioPlayerManager
 
@@ -62,6 +63,7 @@ final class PlayerViewModel: ObservableObject {
     private var sleepTimerTicker: AnyCancellable?
     private var lastPlaybackStoreSaveDate = Date.distantPast
     private var translationsLoadTask: Task<Void, Never>?
+    var requestSubscriptionAccess: (() -> Void)?
 
     init(
         service: (any QuranServiceProtocol)? = nil,
@@ -116,6 +118,21 @@ final class PlayerViewModel: ObservableObject {
 
     var selectedTranslation: QuranTranslation? {
         availableTranslations.first(where: { $0.id == selectedTranslationID })
+    }
+
+    func setSubscriptionActive(_ isActive: Bool) {
+        let wasSubscribed = isSubscribed
+        isSubscribed = isActive
+
+        if !isActive {
+            cancelSleepTimer()
+            isChapterCached = false
+        }
+
+        guard wasSubscribed != isActive else { return }
+        if let currentChapter, let reciter {
+            refreshCacheStateIfCurrent(chapterID: currentChapter.id, reciterID: reciter.id)
+        }
     }
 
     func startPlayback(chapter: QuranChapter, chapters: [QuranChapter], reciter: QuranReciter) {
@@ -246,6 +263,11 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func setSleepTimer(_ preset: SleepTimerPreset) {
+        guard isSubscribed else {
+            requestSubscriptionAccess?()
+            return
+        }
+
         cancelSleepTimer()
 
         let duration = preset.duration
@@ -279,6 +301,11 @@ final class PlayerViewModel: ObservableObject {
     }
 
     func downloadCurrentChapterForOffline() {
+        guard isSubscribed else {
+            requestSubscriptionAccess?()
+            return
+        }
+
         guard let currentChapter, let reciter else { return }
         guard !isDownloadingCurrentChapter else { return }
 
@@ -662,6 +689,11 @@ final class PlayerViewModel: ObservableObject {
                     self.persistPlaybackState(force: true)
                     return
                 }
+                guard self.isSubscribed else {
+                    self.persistPlaybackState(force: true)
+                    self.requestSubscriptionAccess?()
+                    return
+                }
                 self.playNextChapter()
             }
             .store(in: &cancellables)
@@ -800,13 +832,15 @@ final class PlayerViewModel: ObservableObject {
             let cached = await self.cacheManager.isCached(chapterID: chapterID, reciterID: reciterID)
             await MainActor.run {
                 guard self.currentChapter?.id == chapterID, self.reciter?.id == reciterID else { return }
-                self.isChapterCached = cached
+                self.isChapterCached = self.isSubscribed && cached
             }
         }
     }
 
     private func resolvePlaybackSource(chapterID: Int, reciterID: Int) async throws -> PlaybackSource {
-        if let localURL = await cacheManager.cachedFileURL(chapterID: chapterID, reciterID: reciterID) {
+        if isSubscribed,
+           let localURL = await cacheManager.cachedFileURL(chapterID: chapterID, reciterID: reciterID)
+        {
             return PlaybackSource(playbackURL: localURL, isCached: true, verseTimings: [])
         }
 
