@@ -9,6 +9,7 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(\.isSearching) private var isSearching
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var paywallManager: PaywallManager
     let playerViewModel: PlayerViewModel
     @StateObject private var viewModel: HomeViewModel
@@ -16,10 +17,10 @@ struct HomeView: View {
     @State private var hasRestoredPlayback = false
     @State private var chapterSearchText = ""
     @State private var isChapterSearchPresented = false
-    @State private var backgroundFlowProgress = false
     @State private var hasRunEntranceAnimation = false
     @State private var hasShownList = false
     @State private var hasShownMiniPlayer = false
+    @State private var isSettingsPresented = false
 
     @MainActor
     init(playerViewModel: PlayerViewModel, viewModel: HomeViewModel? = nil) {
@@ -30,14 +31,14 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                animatedTrendingBackground
+                AnimatedBackground(colorScheme: colorScheme)
                     .ignoresSafeArea()
 
                 Group {
                     if viewModel.isLoading && viewModel.chapters.isEmpty {
                         ProgressView("Loading Quran")
-                            .tint(.white)
-                            .foregroundStyle(.white)
+                            .tint(AppTheme.primaryText(colorScheme))
+                            .foregroundStyle(AppTheme.primaryText(colorScheme))
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if let errorMessage = viewModel.errorMessage, viewModel.chapters.isEmpty {
                         ContentUnavailableView(
@@ -45,7 +46,7 @@ struct HomeView: View {
                             systemImage: "wifi.exclamationmark",
                             description: Text(errorMessage)
                         )
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(AppTheme.primaryText(colorScheme))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if isFilteredContentEmpty {
                         ContentUnavailableView(
@@ -53,7 +54,7 @@ struct HomeView: View {
                             systemImage: "magnifyingglass",
                             description: Text("Try a different chapter name or number.")
                         )
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(AppTheme.primaryText(colorScheme))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         chapterList
@@ -68,15 +69,20 @@ struct HomeView: View {
                 isPresented: $isChapterSearchPresented,
                 prompt: "Search chapters"
             )
-            .tint(.white)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .tint(AppTheme.tintColor(colorScheme))
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    proButton
+                if !paywallManager.isSubscribed {
+                    ToolbarItem(placement: .topBarLeading) {
+                        proButton
+                    }
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    reciterMenu
+                    Button {
+                        isSettingsPresented = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -104,16 +110,20 @@ struct HomeView: View {
                 hasRestoredPlayback = true
             }
         }
+        .sheet(isPresented: $isSettingsPresented) {
+            SettingsView(viewModel: viewModel)
+                .environmentObject(paywallManager)
+        }
         .fullScreenCover(isPresented: $isPlayerPresented) {
             PlayerView()
                 .environmentObject(playerViewModel)
+                .environmentObject(paywallManager)
         }
         .onChange(of: viewModel.selectedReciterID) { _, _ in
             guard let reciter = viewModel.selectedReciter else { return }
             playerViewModel.updateReciter(reciter)
         }
         .onAppear {
-            startBackgroundAnimation()
             if !viewModel.chapters.isEmpty || viewModel.errorMessage != nil {
                 runEntranceAnimationIfNeeded()
             }
@@ -144,31 +154,31 @@ struct HomeView: View {
                 HStack(spacing: 14) {
                     Text("\(chapter.id)")
                         .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.66))
+                        .foregroundStyle(AppTheme.tertiaryText(colorScheme))
                         .frame(width: 32, alignment: .leading)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(chapter.nameSimple)
                             .font(.headline)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(AppTheme.primaryText(colorScheme))
 
                         Text("\(chapter.translatedName.name) - \(chapter.versesCount) verses")
                             .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.72))
+                            .foregroundStyle(AppTheme.secondaryText(colorScheme))
                     }
 
                     Spacer()
 
                     Text(chapter.nameArabic)
                         .font(.title3)
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(AppTheme.primaryText(colorScheme))
                 }
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
                 .padding(.bottom, filteredChapters.last == chapter ? 100 : 0)
             }
             .listRowBackground(Color.clear)
-            .listRowSeparatorTint(.white.opacity(0.12))
+            .listRowSeparatorTint(AppTheme.separator(colorScheme))
             .buttonStyle(.plain)
             .disabled(viewModel.selectedReciter == nil)
         }
@@ -195,30 +205,6 @@ struct HomeView: View {
         }
         .disabled(paywallManager.isLoading)
         .opacity(paywallManager.isLoading ? 0.7 : 1)
-    }
-
-    @ViewBuilder
-    private var reciterMenu: some View {
-        if viewModel.reciters.isEmpty {
-            EmptyView()
-        } else {
-            Menu {
-                ForEach(viewModel.reciters) { reciter in
-                    Button {
-                        viewModel.selectedReciterID = reciter.id
-                    } label: {
-                        HStack {
-                            Text(reciter.displayName)
-                            if viewModel.selectedReciterID == reciter.id {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: "music.mic")
-            }
-        }
     }
 
     private var filteredChapters: [QuranChapter] {
@@ -252,43 +238,6 @@ struct HomeView: View {
 
     private var shouldShowMiniPlayer: Bool {
         !isChapterSearchPresented && !isSearching
-    }
-
-    private var animatedTrendingBackground: some View {
-        let flowStart = UnitPoint(x: 0.5, y: backgroundFlowProgress ? -0.15 : 1.15)
-        let flowEnd = UnitPoint(x: 0.5, y: backgroundFlowProgress ? 0.85 : 2.15)
-
-        return ZStack {
-            LinearGradient(
-                colors: [
-                    Color.black,
-                    Color(red: 0.03, green: 0.04, blue: 0.07),
-                    Color(red: 0.05, green: 0.06, blue: 0.10)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            LinearGradient(
-                colors: [
-                    Color(red: 0.02, green: 0.11, blue: 0.20),
-                    Color(red: 0.06, green: 0.15, blue: 0.11),
-                    Color(red: 0.09, green: 0.10, blue: 0.18),
-                    Color(red: 0.12, green: 0.12, blue: 0.14)
-                ],
-                startPoint: flowStart,
-                endPoint: flowEnd
-            )
-            .opacity(0.45)
-            .blur(radius: 36)
-        }
-    }
-
-    private func startBackgroundAnimation() {
-        guard !backgroundFlowProgress else { return }
-        withAnimation(.linear(duration: 18).repeatForever(autoreverses: true)) {
-            backgroundFlowProgress = true
-        }
     }
 
     private func runEntranceAnimationIfNeeded() {

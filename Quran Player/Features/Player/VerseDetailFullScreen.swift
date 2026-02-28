@@ -9,6 +9,7 @@ import SwiftUI
 
 struct VerseDetailFullScreen: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var viewModel: PlayerViewModel
     @State private var hasRequestedTranslationRefresh = false
     @State private var isTranslationSearchPresented = false
@@ -32,16 +33,8 @@ struct VerseDetailFullScreen: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            LinearGradient(
-                colors: [
-                    Color.black,
-                    Color(red: 0.03, green: 0.04, blue: 0.08),
-                    Color(red: 0.08, green: 0.11, blue: 0.14)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            AnimatedBackground(colorScheme: colorScheme)
+                .ignoresSafeArea()
 
             ScrollView(showsIndicators: false) {
                 if let detailContext {
@@ -51,7 +44,7 @@ struct VerseDetailFullScreen: View {
                             Text(detailContext.verse.verseKey)
                         }
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
 
                         VStack(spacing: 14) {
                             Text(detailContext.verse.textArabic)
@@ -63,45 +56,45 @@ struct VerseDetailFullScreen: View {
                         .padding(24)
                         .background(
                             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .fill(Color.white.opacity(0.1))
+                                .fill(AppTheme.cardBackground(colorScheme))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                .stroke(Color.white.opacity(0.26), lineWidth: 1)
+                                .stroke(AppTheme.border(colorScheme), lineWidth: 1)
                         )
 
                         VStack(alignment: .leading, spacing: 10) {
                             Text(viewModel.selectedTranslation?.displayName ?? "Translation")
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.72))
+                                .foregroundStyle(AppTheme.secondaryText(colorScheme))
 
                             if let translation = detailContext.verse.textTranslation, !translation.isEmpty {
                                 Text(translation)
                                     .font(.body)
-                                    .foregroundStyle(.white.opacity(0.9))
+                                    .foregroundStyle(AppTheme.primaryText(colorScheme))
                                     .multilineTextAlignment(.leading)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             } else {
                                 Text("Translation unavailable for this verse.")
                                     .font(.body)
-                                    .foregroundStyle(.white.opacity(0.58))
+                                    .foregroundStyle(AppTheme.tertiaryText(colorScheme))
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                         .padding(18)
                         .background(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(Color.white.opacity(0.08))
+                                .fill(AppTheme.cardBackground(colorScheme))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                .stroke(AppTheme.border(colorScheme), lineWidth: 1)
                         )
 
                         if let reciterName = detailContext.reciterName, !reciterName.isEmpty {
                             Text("Reciter: \(reciterName)")
                                 .font(.caption)
-                                .foregroundStyle(.white.opacity(0.66))
+                                .foregroundStyle(AppTheme.tertiaryText(colorScheme))
                         }
                     }
                     .padding(.horizontal, 24)
@@ -110,8 +103,8 @@ struct VerseDetailFullScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     ProgressView("Loading verse")
-                        .tint(.white)
-                        .foregroundStyle(.white.opacity(0.82))
+                        .tint(AppTheme.primaryText(colorScheme))
+                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
                         .frame(maxWidth: .infinity, minHeight: 280, alignment: .center)
                         .padding(.top, 80)
                     }
@@ -139,9 +132,9 @@ struct VerseDetailFullScreen: View {
     private var translationChooserButton: some View {
         if viewModel.isLoadingTranslations && viewModel.availableTranslations.isEmpty {
             ProgressView()
-                .tint(.white)
+                .tint(AppTheme.primaryText(colorScheme))
                 .frame(width: 36, height: 36)
-                .background(Color.white.opacity(0.16))
+                .background(AppTheme.buttonBackground(colorScheme))
                 .clipShape(Circle())
         } else {
             Button {
@@ -152,9 +145,9 @@ struct VerseDetailFullScreen: View {
             } label: {
                 Image(systemName: viewModel.availableTranslations.isEmpty ? "globe.badge.chevron.backward" : "globe")
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppTheme.primaryText(colorScheme))
                     .frame(width: 36, height: 36)
-                    .background(Color.white.opacity(0.16))
+                    .background(AppTheme.buttonBackground(colorScheme))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -167,9 +160,9 @@ struct VerseDetailFullScreen: View {
         } label: {
             Image(systemName: "xmark")
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(AppTheme.primaryText(colorScheme))
                 .frame(width: 36, height: 36)
-                .background(Color.white.opacity(0.16))
+                .background(AppTheme.buttonBackground(colorScheme))
                 .clipShape(Circle())
         }
         .buttonStyle(.plain)

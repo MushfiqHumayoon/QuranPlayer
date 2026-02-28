@@ -63,7 +63,7 @@ struct MiniPlayerBar: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18))
+                .strokeBorder(Color.primary.opacity(0.18))
         }
         .shadow(color: .black.opacity(0.14), radius: 14, y: 8)
     }

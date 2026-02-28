@@ -5,11 +5,14 @@
 //  Created by Codex on 20/02/26.
 //
 
+import AdaptyUI
 import SwiftUI
 
 struct PlayerView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var viewModel: PlayerViewModel
+    @EnvironmentObject private var paywallManager: PaywallManager
 
     @State private var scrubTime: Double = 0
     @State private var isEditingSlider = false
@@ -17,7 +20,6 @@ struct PlayerView: View {
     @State private var currentVerseOffscreenDirection: CurrentVerseJumpDirection?
     @State private var jumpToCurrentVerseRequestID = 0
     @State private var scrollToTopRequestID = 0
-    @State private var backgroundFlowProgress = false
     @State private var isVerseDetailPresented = false
     @State private var shouldPresentPaywallAfterSheetDismiss = false
 
@@ -27,9 +29,9 @@ struct PlayerView: View {
                 playerBody(chapter: chapter)
             } else {
                 ZStack {
-                    Color.black.ignoresSafeArea()
+                    AnimatedBackground(colorScheme: colorScheme).ignoresSafeArea()
                     ProgressView()
-                        .tint(.white)
+                        .tint(AppTheme.primaryText(colorScheme))
                 }
             }
         }
@@ -52,6 +54,25 @@ struct PlayerView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .paywall(
+            isPresented: $paywallManager.isPresented,
+            paywallConfiguration: paywallManager.paywallConfiguration,
+            didFinishPurchase: { _, result in
+                paywallManager.handleDidFinishPurchase(result)
+            },
+            didFailPurchase: { _, error in
+                paywallManager.handleFailedPurchase(error)
+            },
+            didFinishRestore: { profile in
+                paywallManager.handleDidFinishRestore(profile)
+            },
+            didFailRestore: { error in
+                paywallManager.handleFailedRestore(error)
+            },
+            didFailRendering: { error in
+                paywallManager.handleFailedRendering(error)
+            }
+        )
         .alert("Playback Error", isPresented: isShowingError) {
             Button("OK", role: .cancel) {
                 viewModel.errorMessage = nil
@@ -73,7 +94,7 @@ struct PlayerView: View {
             let isCompactHeight = geometry.size.height < 760
 
             ZStack {
-                animatedTrendingBackground
+                AnimatedBackground(colorScheme: colorScheme)
                 .ignoresSafeArea()
 
                 VStack(spacing: isCompactHeight ? 12 : 18) {
@@ -91,14 +112,11 @@ struct PlayerView: View {
                 if viewModel.isLoadingAudio {
                     ProgressView()
                         .controlSize(.large)
-                        .tint(.white)
+                        .tint(AppTheme.primaryText(colorScheme))
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 bottomPlaybackBar(chapter: chapter)
-            }
-            .onAppear {
-                startBackgroundAnimation()
             }
         }
     }
@@ -110,9 +128,9 @@ struct PlayerView: View {
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppTheme.primaryText(colorScheme))
                     .frame(width: 36, height: 36)
-                    .background(Color.white.opacity(0.16))
+                    .background(AppTheme.buttonBackground(colorScheme))
                     .clipShape(Circle())
             }
 
@@ -121,11 +139,11 @@ struct PlayerView: View {
             VStack(spacing: 2) {
                 Text(chapter.nameSimple)
                     .font(.title2.weight(.bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppTheme.primaryText(colorScheme))
 
                 Text(chapter.nameArabic)
                     .font(.title3)
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(AppTheme.primaryText(colorScheme))
             }
 
             Spacer()
@@ -135,9 +153,9 @@ struct PlayerView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(AppTheme.primaryText(colorScheme))
                     .frame(width: 36, height: 36)
-                    .background(Color.white.opacity(0.16))
+                    .background(AppTheme.buttonBackground(colorScheme))
                     .clipShape(Circle())
             }
         }
@@ -148,8 +166,8 @@ struct PlayerView: View {
             .fill(
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(0.25),
-                        Color.white.opacity(0.08)
+                        AppTheme.buttonBackground(colorScheme),
+                        AppTheme.cardBackground(colorScheme)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -158,7 +176,7 @@ struct PlayerView: View {
             .overlay {
                 Image(systemName: "book.closed.fill")
                     .font(.system(size: 72))
-                    .foregroundStyle(.white.opacity(0.95))
+                    .foregroundStyle(AppTheme.primaryText(colorScheme))
             }
             .frame(maxWidth: maxWidth)
             .aspectRatio(1, contentMode: .fit)
@@ -170,17 +188,17 @@ struct PlayerView: View {
             if viewModel.isDownloadingCurrentChapter {
                 Label("Downloading for offline playback", systemImage: "arrow.down.circle")
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.78))
+                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
             } else if viewModel.isChapterCached {
                 Label("Available offline", systemImage: "checkmark.circle.fill")
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.78))
+                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
             }
 
             if let sleepTimerDisplayText = viewModel.sleepTimerDisplayText {
                 Text("Sleep in \(sleepTimerDisplayText)")
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.78))
+                    .foregroundStyle(AppTheme.secondaryText(colorScheme))
             }
         }
     }
@@ -206,7 +224,7 @@ struct PlayerView: View {
         HStack {
             Text(viewModel.reciter?.reciterName ?? "Quran")
                 .font(.caption2)
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(AppTheme.secondaryText(colorScheme))
                 .lineLimit(1)
             
             Spacer()
@@ -215,7 +233,7 @@ struct PlayerView: View {
                 HStack(spacing: 8) {
                     Text("Ayah \(verseIndex + 1)/\(viewModel.verses.count)")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(AppTheme.secondaryText(colorScheme))
 
                     if let currentVerseOffscreenDirection {
                         Button {
@@ -223,7 +241,7 @@ struct PlayerView: View {
                         } label: {
                             Image(systemName: currentVerseOffscreenDirection.systemImage)
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(AppTheme.primaryText(colorScheme))
                                 .frame(width: 20, height: 20)
                         }
                         .buttonStyle(.plain)
@@ -237,16 +255,16 @@ struct PlayerView: View {
     private var versesSectionContent: some View {
         if viewModel.verses.isEmpty {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(0.08))
+                .fill(AppTheme.cardBackground(colorScheme))
                 .overlay {
                     if viewModel.isLoadingVerses {
                         ProgressView("Loading verses")
                             .font(.caption)
-                            .tint(.white)
+                            .tint(AppTheme.primaryText(colorScheme))
                     } else {
                         Text("Verses unavailable for this chapter.")
                             .font(.caption)
-                            .foregroundStyle(.white.opacity(0.7))
+                            .foregroundStyle(AppTheme.secondaryText(colorScheme))
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -293,7 +311,7 @@ struct PlayerView: View {
                     }
                 }
             )
-            .tint(.white)
+            .tint(AppTheme.primaryText(colorScheme))
 
             HStack {
                 Text(formatTime(viewModel.currentTime))
@@ -301,7 +319,7 @@ struct PlayerView: View {
                 Text(formatTime(viewModel.duration))
             }
             .font(.caption.monospacedDigit())
-            .foregroundStyle(.white.opacity(0.75))
+            .foregroundStyle(AppTheme.secondaryText(colorScheme))
         }
     }
 
@@ -347,7 +365,7 @@ struct PlayerView: View {
                 .disabled(!viewModel.canGoToNextChapter)
             }
             .font(.title2)
-            .foregroundStyle(.white)
+            .foregroundStyle(AppTheme.primaryText(colorScheme))
             .buttonStyle(.plain)
             .symbolRenderingMode(.hierarchical)
             .opacity(viewModel.isLoadingAudio ? 0.6 : 1)
@@ -355,7 +373,7 @@ struct PlayerView: View {
 
             Text("Chapter \(chapter.id) - \(chapter.translatedName.name) | \(chapter.versesCount) verses")
                 .font(.caption)
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(AppTheme.secondaryText(colorScheme))
         }
     }
 
@@ -396,42 +414,6 @@ struct PlayerView: View {
         viewModel.requestSubscriptionAccess?()
     }
 
-    private var animatedTrendingBackground: some View {
-        let flowStart = UnitPoint(x: 0.5, y: backgroundFlowProgress ? -0.15 : 1.15)
-        let flowEnd = UnitPoint(x: 0.5, y: backgroundFlowProgress ? 0.85 : 2.15)
-
-        return ZStack {
-            LinearGradient(
-                colors: [
-                    Color.black,
-                    Color(red: 0.03, green: 0.04, blue: 0.07),
-                    Color(red: 0.05, green: 0.06, blue: 0.10)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            LinearGradient(
-                colors: [
-                    Color(red: 0.02, green: 0.11, blue: 0.20),
-                    Color(red: 0.06, green: 0.15, blue: 0.11),
-                    Color(red: 0.09, green: 0.10, blue: 0.18),
-                    Color(red: 0.12, green: 0.12, blue: 0.14)
-                ],
-                startPoint: flowStart,
-                endPoint: flowEnd
-            )
-            .opacity(0.45)
-            .blur(radius: 36)
-        }
-    }
-
-    private func startBackgroundAnimation() {
-        guard !backgroundFlowProgress else { return }
-        withAnimation(.linear(duration: 18).repeatForever(autoreverses: true)) {
-            backgroundFlowProgress = true
-        }
-    }
 }
 
 private struct VerseLyricsList: View {
@@ -602,6 +584,7 @@ private struct VerseLyricsList: View {
 }
 
 private struct VerseLyricsRow: View {
+    @Environment(\.colorScheme) private var colorScheme
     let index: Int
     let verse: QuranVerse
     let isCurrent: Bool
@@ -611,13 +594,13 @@ private struct VerseLyricsRow: View {
             Text("\(index + 1)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(
-                    isCurrent ? Color.white.opacity(0.95) : Color.white.opacity(0.65)
+                    isCurrent ? AppTheme.primaryText(colorScheme) : AppTheme.tertiaryText(colorScheme)
                 )
                 .frame(width: 30, alignment: .leading)
 
             Text(verse.textArabic)
                 .font(.title3)
-                .foregroundStyle(isCurrent ? .white : .white.opacity(0.80))
+                .foregroundStyle(isCurrent ? AppTheme.primaryText(colorScheme) : AppTheme.secondaryText(colorScheme))
                 .multilineTextAlignment(.trailing)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -626,11 +609,11 @@ private struct VerseLyricsRow: View {
         .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(isCurrent ? Color.white.opacity(0.18) : Color.white.opacity(0.08))
+                .fill(isCurrent ? AppTheme.buttonBackground(colorScheme) : AppTheme.cardBackground(colorScheme))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(isCurrent ? Color.white.opacity(0.55) : Color.clear, lineWidth: 1)
+                .stroke(isCurrent ? AppTheme.border(colorScheme) : Color.clear, lineWidth: 1)
         )
     }
 }

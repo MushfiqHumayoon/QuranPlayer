@@ -12,6 +12,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var playerViewModel: PlayerViewModel
     @StateObject private var paywallManager = PaywallManager()
+    @AppStorage("isDarkMode") private var isDarkMode = true
     @State private var isShowingSplash = true
 
     @MainActor
@@ -56,6 +57,7 @@ struct ContentView: View {
                 dismissButton: .default(Text("OK"))
             )
         }
+        .preferredColorScheme(isDarkMode ? .dark : .light)
         .animation(.easeInOut(duration: 0.55), value: isShowingSplash)
         .onAppear {
             playerViewModel.requestSubscriptionAccess = { [paywallManager] in

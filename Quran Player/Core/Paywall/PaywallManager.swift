@@ -128,6 +128,9 @@ final class PaywallManager: ObservableObject {
 
     private func updateSubscriptionStatus(with profile: AdaptyProfile) {
         isSubscribed = profile.accessLevels.values.contains(where: \.isActive)
+        if isSubscribed {
+            isPresented = false
+        }
     }
 
     private func report(_ error: Error) {
